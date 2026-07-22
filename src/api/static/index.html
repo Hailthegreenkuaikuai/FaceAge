@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FaceAge</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #0f0f12;
+      color: #e0e0e0;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 2rem;
+    }
+    .card {
+      background: #1a1a20;
+      border-radius: 12px;
+      padding: 2rem;
+      width: 100%;
+      max-width: 480px;
+      box-shadow: 0 4px 24px rgba(0,0,0,.4);
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 1.5rem; }
+    .drop-zone {
+      border: 2px dashed #3a3a44;
+      border-radius: 8px;
+      padding: 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s;
+      margin-bottom: 1rem;
+    }
+    .drop-zone:hover, .drop-zone.dragover { border-color: #6c8cff; }
+    .drop-zone p { color: #888; font-size: .9rem; }
+    input[type="file"] { display: none; }
+    .file-list {
+      list-style: none;
+      font-size: .85rem;
+      margin-bottom: 1rem;
+      max-height: 150px;
+      overflow-y: auto;
+    }
+    .file-list li {
+      padding: .3rem 0;
+      color: #aaa;
+      border-bottom: 1px solid #222;
+    }
+    button {
+      width: 100%;
+      padding: .75rem;
+      background: #6c8cff;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    button:hover { background: #5a7af0; }
+    button:disabled { background: #3a3a44; cursor: not-allowed; }
+    .result {
+      margin-top: 1.5rem;
+      padding: 1rem;
+      background: #16161b;
+      border-radius: 8px;
+      display: none;
+    }
+    .result.show { display: block; }
+    .result h2 { font-size: 1rem; margin-bottom: .5rem; color: #888; }
+    .avg-age { font-size: 2.5rem; font-weight: 700; color: #6c8cff; }
+    .detail { margin-top: .75rem; font-size: .85rem; }
+    .detail li { padding: .2rem 0; color: #aaa; }
+    .error { color: #ff6b6b; font-size: .9rem; margin-top: .5rem; display: none; }
+    .error.show { display: block; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>FaceAge Predictor</h1>
+    <div class="drop-zone" id="dropZone">
+      <p>Click or drop photos here</p>
+      <input type="file" id="fileInput" multiple accept="image/*">
+    </div>
+    <ul class="file-list" id="fileList"></ul>
+    <button id="uploadBtn" disabled>Predict Age</button>
+    <div class="error" id="error"></div>
+    <div class="result" id="result">
+      <h2>Predicted Biological Age</h2>
+      <div class="avg-age" id="avgAge">—</div>
+      <ul class="detail" id="detail"></ul>
+    </div>
+  </div>
+
+  <script>
+    const dropZone = document.getElementById('dropZone')
+    const fileInput = document.getElementById('fileInput')
+    const fileList = document.getElementById('fileList')
+    const uploadBtn = document.getElementById('uploadBtn')
+    const result = document.getElementById('result')
+    const avgAge = document.getElementById('avgAge')
+    const detail = document.getElementById('detail')
+    const error = document.getElementById('error')
+
+    let files = []
+
+    dropZone.addEventListener('click', () => fileInput.click())
+    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover') })
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'))
+    dropZone.addEventListener('drop', e => {
+      e.preventDefault()
+      dropZone.classList.remove('dragover')
+      addFiles(e.dataTransfer.files)
+    })
+    fileInput.addEventListener('change', () => addFiles(fileInput.files))
+
+    function addFiles(newFiles) {
+      files = [...files, ...newFiles]
+      render()
+    }
+
+    function render() {
+      fileList.innerHTML = files.map(f => `<li>${f.name}</li>`).join('')
+      uploadBtn.disabled = files.length === 0
+      result.classList.remove('show')
+      error.classList.remove('show')
+    }
+
+    uploadBtn.addEventListener('click', async () => {
+      uploadBtn.disabled = true
+      uploadBtn.textContent = 'Predicting...'
+      error.classList.remove('show')
+      result.classList.remove('show')
+
+      const form = new FormData()
+      files.forEach(f => form.append('files', f))
+
+      try {
+        const res = await fetch('/face/age', { method: 'POST', body: form })
+        if (!res.ok) throw new Error(`Server error: ${res.status}`)
+        const data = await res.json()
+
+        // reset for next prediction before showing result
+        files = []
+        fileInput.value = ''
+        render()
+
+        if (data.avg_age !== null) {
+          avgAge.textContent = data.avg_age.toFixed(1) + ' years'
+        } else {
+          avgAge.textContent = 'No face detected'
+        }
+
+        detail.innerHTML = data.individual_ages.map(a =>
+          `<li>${a.original_name}: ${a.predicted_age !== null ? a.predicted_age.toFixed(1) + ' yrs' : 'no face found'}</li>`
+        ).join('')
+        result.classList.add('show')
+      } catch (e) {
+        error.textContent = e.message
+        error.classList.add('show')
+      } finally {
+        uploadBtn.disabled = false
+        uploadBtn.textContent = 'Predict Age'
+      }
+    })
+  </script>
+</body>
+</html>

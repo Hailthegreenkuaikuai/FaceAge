@@ -34,7 +34,7 @@ import pandas as pd
 import tensorflow as tf
 
 # suppress warnings/errors due to migration from TensorFlow 1.x to 2.x
-tf.compat.v1.disable_eager_execution()
+# ponytail: removed disable_eager_execution — breaks MTCNN on TF 2.x
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 from skimage.io import imsave, imread
@@ -76,19 +76,12 @@ def get_face_bbox_from_image(path_to_image):
 
 ## ----------------------------------------
 
-def get_model_prediction(model, path_to_image, mtcnn_output_dict):
-  
-  """
-  Get the FaceAge estimation for the given image.
-  Requires a bounding box (around the face) to be computed prior to this step.
+def preprocess_face(path_to_image, mtcnn_output_dict):
 
-  @params:
-    model - required: the object storing the pre-trained (TF) FaceAge model
-    path_to_image - required: absolute path to the image file to be processed.
-    mtcnn_output_dict - required: dictionary storing the aforementioned bounding box
-      (e.g., obtained from the MTCNN face detector, by running "get_face_bbox_from_image")
-     
-   """
+  """
+  Preprocess a single face image for model input.
+  Returns a (160, 160, 3) normalized numpy array.
+  """
 
   # sanity check
   assert os.path.exists(path_to_image)
@@ -106,13 +99,28 @@ def get_model_prediction(model, path_to_image, mtcnn_output_dict):
   # resize cropped image to the model input size
   pat_face_pil = PIL.Image.fromarray(np.uint8(pat_face)).convert('RGB')
   pat_face = np.asarray(pat_face_pil.resize((160, 160)))
-  
+
   # prep image for TF processing
   mean, std = pat_face.mean(), pat_face.std()
   pat_face = (pat_face - mean) / std
+  return pat_face
+
+## ----------------------------------------
+
+def get_model_prediction(model, path_to_image, mtcnn_output_dict):
+  """Single-image prediction (kept for backward compat)."""
+  pat_face = preprocess_face(path_to_image, mtcnn_output_dict)
   pat_face_input = pat_face.reshape(1, 160, 160, 3)
-  
-  return np.squeeze(model.predict(pat_face_input))
+  return np.squeeze(model.predict(pat_face_input, verbose=0))
+
+## ----------------------------------------
+
+def get_model_prediction_batch(model, face_inputs):
+  """Batch prediction for a list of (160, 160, 3) images."""
+  if not face_inputs:
+    return np.array([])
+  batch = np.stack(face_inputs, axis=0)  # shape: (N, 160, 160, 3)
+  return np.squeeze(model.predict(batch, verbose=0))
 
 ## ----------------------------------------
 ## ----------------------------------------
@@ -175,30 +183,34 @@ def main(config):
   # ------------------------
 
   model_path = os.path.join(base_model_path, model_name)
-  model = keras.models.load_model(model_path)
-
+  model = keras.models.load_model(model_path, safe_mode = False)
+  print(model)
   print("")
 
   age_pred_dict = dict()
 
   t = time.time()
 
-  for idx, subj_id in enumerate(face_bbox_dict.keys()):
-    
-    print('(%g/%g) Running the age estimation step for "%s"'%(idx + 1,
-                                                              len(face_bbox_dict),
-                                                              subj_id),
+  # Preprocess all faces
+  subj_ids = list(face_bbox_dict.keys())
+  face_batch = []
+  for idx, subj_id in enumerate(subj_ids):
+    print('(%g/%g) Preprocessing face for "%s"'%(idx + 1, len(subj_ids), subj_id),
     end = "\r")
-
     path_to_image = face_bbox_dict[subj_id]["path_to_image"]
     mtcnn_output_dict = face_bbox_dict[subj_id]["mtcnn_output_dict"]
+    face_batch.append(preprocess_face(path_to_image, mtcnn_output_dict))
 
-    age_pred_dict[subj_id] = dict()
+  # Batch predict all at once
+  print("\nRunning batch prediction on %d faces..." % len(face_batch))
+  predictions = get_model_prediction_batch(model, face_batch)
 
-    age_pred_dict[subj_id]["faceage"] = get_model_prediction(model, path_to_image, mtcnn_output_dict)
+  # Distribute results
+  for subj_id, faceage in zip(subj_ids, predictions):
+    age_pred_dict[subj_id] = {"faceage": float(faceage)}
 
   elapsed = time.time() - t
-  print("\n... Done in %g seconds."%(elapsed))
+  print("... Done in %g seconds."%(elapsed))
 
   age_pred_df = pd.DataFrame.from_dict(age_pred_dict, orient = 'index')
   age_pred_df.reset_index(level = 0, inplace = True)
@@ -259,7 +271,15 @@ if __name__ == '__main__':
   config = dict()
   
   config["base_model_path"] = base_model_path
-  config["model_name"] = model_name + ".h5" if model_name.split(".")[-1] != "h5" else model_name
+  # Prefer .keras format (Python 3.13 compat) over legacy .h5
+  keras_path = os.path.join(base_model_path, model_name + ".keras")
+  h5_path = os.path.join(base_model_path, model_name + ".h5")
+  if os.path.exists(keras_path):
+      config["model_name"] = model_name + ".keras"
+  elif os.path.exists(h5_path):
+      config["model_name"] = model_name + ".h5"
+  else:
+      config["model_name"] = model_name + ".h5"
 
   config["base_output_path"] = base_output_path
   

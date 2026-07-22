@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Concurrency Test — FaceAge</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, sans-serif;
+      background: #0f0f12;
+      color: #e0e0e0;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+    h1 { font-size: 1.3rem; margin-bottom: 1rem; }
+    .controls { display: flex; gap: .5rem; margin-bottom: 1rem; align-items: center; }
+    button {
+      padding: .6rem 1rem;
+      border: none;
+      border-radius: 6px;
+      font-size: .85rem;
+      cursor: pointer;
+    }
+    .btn-add { background: #2a5a3a; color: #4ec96b; }
+    .btn-add:hover { background: #357a4a; }
+    .btn-rm { background: transparent; color: #ff6b6b; font-size: 1rem; padding: .2rem .5rem; line-height: 1; }
+    .btn-rm:hover { background: #2a1a1a; }
+    .btn-send {
+      background: #6c8cff;
+      color: #fff;
+      font-weight: 600;
+      font-size: 1rem;
+      padding: .75rem 2rem;
+    }
+    .btn-send:hover { background: #5a7af0; }
+    .btn-send:disabled { background: #3a3a44; cursor: not-allowed; }
+    .panels { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; }
+    .panel {
+      background: #1a1a20;
+      border-radius: 10px;
+      padding: 1.25rem;
+      position: relative;
+    }
+    .panel h2 { font-size: .95rem; display: flex; justify-content: space-between; align-items: center; margin-bottom: .75rem; }
+    .drop-zone {
+      border: 2px dashed #3a3a44;
+      border-radius: 8px;
+      padding: 1.25rem;
+      text-align: center;
+      cursor: pointer;
+      margin-bottom: .5rem;
+      font-size: .8rem;
+      color: #888;
+    }
+    .drop-zone:hover, .drop-zone.dragover { border-color: #6c8cff; }
+    input[type="file"] { display: none; }
+    .file-list { list-style: none; font-size: .75rem; margin-bottom: .5rem; min-height: 0; max-height: 120px; overflow-y: auto; }
+    .file-list li { padding: .15rem 0; color: #aaa; display: flex; justify-content: space-between; }
+    .file-list li .rm { color: #ff6b6b; cursor: pointer; font-size: .85rem; padding: 0 .3rem; }
+    .status { margin-top: .5rem; font-size: .8rem; min-height: 1.2em; }
+    .status.pending { color: #f0c040; }
+    .status.done { color: #4ec96b; }
+    .status.error { color: #ff6b6b; }
+    .result { margin-top: .25rem; font-size: .8rem; }
+    .result .age { font-size: 1.4rem; font-weight: 700; color: #6c8cff; }
+    .result .detail { color: #888; font-size: .75rem; }
+    .log {
+      margin-top: 1.5rem;
+      background: #1a1a20;
+      border-radius: 10px;
+      padding: 1rem;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    .log h2 { font-size: .9rem; margin-bottom: .5rem; color: #888; }
+    .log .entry { font-size: .8rem; padding: .25rem 0; border-bottom: 1px solid #1f1f26; font-family: monospace; }
+    .log .entry .time { color: #888; }
+    .log .entry .ok { color: #4ec96b; }
+    .log .entry .err { color: #ff6b6b; }
+  </style>
+</head>
+<body>
+  <h1>Concurrency Test</h1>
+  <div class="controls">
+    <button class="btn-add" id="addPanel">+ Add Panel</button>
+    <span style="font-size:.8rem;color:#888;" id="panelCount">2 panels</span>
+    <button class="btn-send" id="sendAll" disabled>Send All</button>
+  </div>
+  <div class="panels" id="panels"></div>
+  <div class="log" id="log"><h2>Timeline</h2></div>
+
+  <template id="panel-tpl">
+    <div class="panel">
+      <h2>
+        <span class="label"></span>
+        <button class="btn-rm" title="Remove">×</button>
+      </h2>
+      <div class="drop-zone">Click or drop photos</div>
+      <input type="file" multiple accept="image/*">
+      <ul class="file-list"></ul>
+      <div class="status"></div>
+      <div class="result"></div>
+    </div>
+  </template>
+
+  <script>
+    let counter = 0
+    const panels = new Map() // id -> { files, el, drop, fileInput, list, status, result }
+
+    function createPanel() {
+      const id = ++counter
+      const tpl = document.getElementById('panel-tpl').content.cloneNode(true)
+      const el = tpl.querySelector('.panel')
+      el.querySelector('.label').textContent = `Request #${id}`
+      el.querySelector('.btn-rm').addEventListener('click', () => removePanel(id))
+      el.querySelector('.drop-zone').addEventListener('click', () => panels.get(id).fileInput.click())
+      const dropZone = el.querySelector('.drop-zone')
+      dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover') })
+      dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'))
+      dropZone.addEventListener('drop', e => {
+        e.preventDefault()
+        dropZone.classList.remove('dragover')
+        addFiles(id, e.dataTransfer.files)
+      })
+      const fileInput = el.querySelector('input[type="file"]')
+      fileInput.addEventListener('change', () => addFiles(id, fileInput.files))
+
+      const data = {
+        id,
+        el,
+        files: [],
+        dropZone,
+        fileInput,
+        list: el.querySelector('.file-list'),
+        status: el.querySelector('.status'),
+        result: el.querySelector('.result'),
+      }
+
+      panels.set(id, data)
+      document.getElementById('panels').appendChild(el)
+      updateUI()
+      return id
+    }
+
+    function removePanel(id) {
+      panels.delete(id)
+      document.querySelectorAll('#panels .panel').forEach(p => {
+        // ponytail: re-index after removal — match remaining DOM to map entries
+      })
+      // rebuild DOM to keep labels in sync
+      rebuildPanelDOM()
+    }
+
+    function rebuildPanelDOM() {
+      const container = document.getElementById('panels')
+      container.innerHTML = ''
+      const entries = [...panels.entries()]
+      panels.clear()
+      for (const [, data] of entries) {
+        data.dropZone.addEventListener('click', () => data.fileInput.click())
+        data.el.querySelector('.btn-rm').addEventListener('click', () => removePanel(data.id))
+        container.appendChild(data.el)
+        panels.set(data.id, data)
+      }
+      updateUI()
+    }
+
+    function addFiles(id, newFiles) {
+      const data = panels.get(id)
+      if (!data) return
+      data.files = [...data.files, ...newFiles]
+      renderPanel(id)
+    }
+
+    function removeFile(id, idx) {
+      const data = panels.get(id)
+      if (!data) return
+      data.files.splice(idx, 1)
+      data.fileInput.value = ''
+      renderPanel(id)
+    }
+
+    function renderPanel(id) {
+      const data = panels.get(id)
+      if (!data) return
+      data.list.innerHTML = data.files.map((f, i) =>
+        `<li><span>${f.name}</span><span class="rm" data-idx="${i}">×</span></li>`
+      ).join('')
+      data.list.querySelectorAll('.rm').forEach(el => {
+        el.addEventListener('click', e => {
+          e.stopPropagation()
+          removeFile(id, parseInt(el.dataset.idx))
+        })
+      })
+      updateUI()
+    }
+
+    function updateUI() {
+      const count = panels.size
+      document.getElementById('panelCount').textContent = `${count} panel${count !== 1 ? 's' : ''}`
+
+      let anyFiles = false
+      for (const [, d] of panels) {
+        if (d.files.length > 0) { anyFiles = true; break }
+      }
+      document.getElementById('sendAll').disabled = !anyFiles
+    }
+
+    function log(msg, cls = '') {
+      const t = new Date().toLocaleTimeString('en-US', { hour12: false, fractionalSecondDigits: 3 })
+      const entry = document.createElement('div')
+      entry.className = 'entry'
+      entry.innerHTML = `<span class="time">[${t}]</span> <span class="${cls}">${msg}</span>`
+      const logEl = document.getElementById('log')
+      logEl.appendChild(entry)
+      logEl.scrollTop = logEl.scrollHeight
+    }
+
+    async function sendPanel(id) {
+      const data = panels.get(id)
+      if (!data || data.files.length === 0) return null
+
+      data.status.textContent = 'Sending...'
+      data.status.className = 'status pending'
+      data.result.innerHTML = ''
+
+      const form = new FormData()
+      data.files.forEach(f => form.append('files', f))
+
+      const start = performance.now()
+      try {
+        const res = await fetch('/face/age', { method: 'POST', body: form })
+        const elapsed = (performance.now() - start).toFixed(0)
+        if (!res.ok) throw new Error(`${res.status}`)
+        const json = await res.json()
+        data.status.textContent = `Done in ${elapsed}ms`
+        data.status.className = 'status done'
+
+        let html = json.avg_age !== null
+          ? `<div class="age">${json.avg_age.toFixed(1)} years</div>`
+          : '<div class="age">No face</div>'
+        html += `<div class="detail">${json.individual_ages.map(a =>
+          `${a.original_name}: ${a.predicted_age !== null ? a.predicted_age.toFixed(1) + ' yrs' : 'no face'}`
+        ).join('<br>')}</div>`
+        data.result.innerHTML = html
+        log(`#${id}: ${json.avg_age?.toFixed(1) ?? 'N/A'} yrs, ${json.individual_ages.length} photos, ${elapsed}ms`, 'ok')
+        return { id, elapsed: parseInt(elapsed), ok: true }
+      } catch (e) {
+        data.status.textContent = `Error: ${e.message}`
+        data.status.className = 'status error'
+        log(`#${id}: ERROR ${e.message}`, 'err')
+        return { id, elapsed: Math.round(performance.now() - start), ok: false }
+      }
+    }
+
+    document.getElementById('addPanel').addEventListener('click', () => createPanel())
+
+    document.getElementById('sendAll').addEventListener('click', async () => {
+      const btn = document.getElementById('sendAll')
+      btn.disabled = true
+      btn.textContent = 'Running...'
+
+      for (const [, d] of panels) {
+        d.status.textContent = ''
+        d.status.className = 'status'
+        d.result.innerHTML = ''
+      }
+
+      const ids = [...panels.keys()].filter(k => panels.get(k).files.length > 0)
+      log(`--- Fire ${ids.length} requests simultaneously ---`)
+      const t0 = performance.now()
+
+      const results = await Promise.all(ids.map(id => sendPanel(id)))
+      const valid = results.filter(r => r && r.ok)
+
+      const total = Math.round(performance.now() - t0)
+      const serialSum = valid.reduce((s, r) => s + r.elapsed, 0)
+      log(`Wall-clock: ${total}ms | Serial sum: ${serialSum}ms | Lock serialization overhead: +${total - serialSum}ms`)
+      log(`First: ${valid[0]?.elapsed}ms, Last: ${valid[valid.length - 1]?.elapsed}ms (${valid.length} completed)`)
+
+      btn.disabled = false
+      btn.textContent = 'Send All'
+    })
+
+    // start with 2 default panels
+    createPanel()
+    createPanel()
+  </script>
+</body>
+</html>
