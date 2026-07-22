@@ -1,0 +1,15 @@
+h5py
+importlib-metadata
+keras
+keras-preprocessing
+mtcnn
+numpy
+opencv-python
+pandas
+scikit-image
+seaborn
+tensorboard
+tensorboard-data-server
+tensorboard-plugin-wit
+tensorflow-estimator
+tensorflow
