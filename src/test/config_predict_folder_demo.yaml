@@ -2,7 +2,7 @@ test:
     # by default, relative paths   
 
     # path to the repo root folder
-    base_path : "/home/dennis/git/FaceAge/"
+    base_path : "C:\\Code\\FaceAge"
     
     # name of the data subfolder (in the root repo dir)
     data_folder_name : "data"
@@ -17,4 +17,4 @@ test:
     outputs_folder_name : "outputs"
     
     # by default, this should be stored under "data"
-    input_folder_name : "utk_hi-res_qa"
+    input_folder_name : "uploads"

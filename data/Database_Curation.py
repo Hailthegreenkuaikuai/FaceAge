@@ -51,9 +51,9 @@ def time_between(d1, d2, time_mode):
         d1i = datetime.strptime(d1[i], "%Y-%m-%d")
         d2i = datetime.strptime(d2[i], "%Y-%m-%d")
         if time_mode == 'days':
-        	age[i] = abs((d2i - d1i).days)
+            age[i] = abs((d2i - d1i).days)
         else:
-        	age[i] = abs((d2i - d1i).days)/365
+            age[i] = abs((d2i - d1i).days)/365
     return age
 
 # load associated log file
